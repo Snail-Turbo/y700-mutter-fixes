@@ -1,0 +1,80 @@
+Description: Clamp KMS damage clips to the framebuffer bounds
+ The kernel rejects negative damage coordinates with -EINVAL in
+ drm_atomic_plane_check(), causing page flip failures when a window
+ touches the screen edge under fractional scaling.
+Origin: local
+--- a/src/backends/native/meta-kms-update.c
++++ b/src/backends/native/meta-kms-update.c
+@@ -23,6 +23,7 @@
+ #include <glib/gstdio.h>
+ 
+ #include "backends/meta-display-config-shared.h"
++#include "backends/native/meta-drm-buffer.h"
+ #include "backends/native/meta-kms-connector.h"
+ #include "backends/native/meta-kms-crtc.h"
+ #include "backends/native/meta-kms-impl-device.h"
+@@ -691,24 +692,58 @@
+ {
+   MetaKmsFbDamage *fb_damage;
+   struct drm_mode_rect *mode_rects;
+-  int n_rectangles;
++  int n_rectangles, n_valid = 0;
++  int fb_width = 0, fb_height = 0;
+   int i;
+ 
++  if (plane_assignment->buffer)
++    {
++      fb_width = meta_drm_buffer_get_width (plane_assignment->buffer);
++      fb_height = meta_drm_buffer_get_height (plane_assignment->buffer);
++    }
++
+   n_rectangles = mtk_region_num_rectangles (region);
+   mode_rects = g_new0 (struct drm_mode_rect, n_rectangles);
+   for (i = 0; i < n_rectangles; ++i)
+     {
++      struct drm_mode_rect *rect = &mode_rects[n_valid];
++
+       mtk_region_get_box (region, i,
+-                          &mode_rects[i].x1,
+-                          &mode_rects[i].y1,
+-                          &mode_rects[i].x2,
+-                          &mode_rects[i].y2);
++                          &rect->x1,
++                          &rect->y1,
++                          &rect->x2,
++                          &rect->y2);
++
++      /*
++       * Damage clips must be inside the framebuffer; the kernel rejects
++       * negative coordinates with -EINVAL in drm_atomic_plane_check(). A
++       * 1px damage expansion at the screen edge can produce x1 == -1, so
++       * clamp and drop empty clips here.
++       */
++      if (fb_width > 0 && fb_height > 0)
++        {
++          rect->x1 = CLAMP (rect->x1, 0, fb_width);
++          rect->y1 = CLAMP (rect->y1, 0, fb_height);
++          rect->x2 = CLAMP (rect->x2, 0, fb_width);
++          rect->y2 = CLAMP (rect->y2, 0, fb_height);
++        }
++
++      if (rect->x1 >= rect->x2 || rect->y1 >= rect->y2)
++        continue;
++
++      n_valid++;
++    }
++
++  if (n_valid == 0)
++    {
++      g_free (mode_rects);
++      return;
+     }
+ 
+   fb_damage = g_new0 (MetaKmsFbDamage, 1);
+   *fb_damage = (MetaKmsFbDamage) {
+     .rects = mode_rects,
+-    .n_rects = n_rectangles,
++    .n_rects = n_valid,
+   };
+ 
+   plane_assignment->fb_damage = fb_damage;

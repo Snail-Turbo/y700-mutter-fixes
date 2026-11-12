@@ -1,0 +1,20 @@
+Description: Add the local +y7001 changelog entry
+ Document the damage clip clamp and the carried touch fix in the
+ package changelog so the built binaries carry the local version.
+Origin: local
+--- a/debian/changelog
++++ b/debian/changelog
+@@ -1,3 +1,13 @@
++mutter (50.1-0ubuntu2.5+y7001) resolute; urgency=medium
++
++  * Clamp KMS damage clips to the framebuffer bounds. The kernel rejects
++    negative damage coordinates with -EINVAL, which caused page flip
++    failures on window transitions at the screen edge.
++  * wayland/touch: Do not crash on an empty focus surface. This carries the
++    local touch-resize fix that was previously installed on the Y700.
++
++ -- yiyang-dev <yiyang-dev@localhost>  Wed, 12 Nov 2026 21:45:00 +0800
++
+ mutter (50.1-0ubuntu2.5) resolute; urgency=medium
+ 
+   * d/p/u: Fix alt-tab with sloppy/mouse window focus-mode.

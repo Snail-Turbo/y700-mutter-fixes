@@ -1,2 +1,0 @@
-artifacts/*.deb filter=lfs diff=lfs merge=lfs -text
-artifacts/*.ddeb filter=lfs diff=lfs merge=lfs -text

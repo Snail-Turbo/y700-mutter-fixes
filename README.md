@@ -1,8 +1,26 @@
 # y700-mutter-fixes
 
-Lenovo Y700（TB323FU / SM8850）上 Ubuntu 26.04 arm64、Mutter 50.1 的本地修复。
+**English TL;DR** — Downstream Mutter 50.1 patches for the Lenovo Y700 (TB323FU, SM8850) on
+Ubuntu 26.04 arm64: clamp KMS damage clips (fixes `Page flip failed: drmModeAtomicCommit: EINVAL`
+caused by `invalid damage clip x1=-1`) and keep the touch `focus_surface == NULL` guard.
+Prebuilt arm64 packages are attached to [Releases](../../releases); this repository carries only
+the patches and build scripts. Unofficial, device- and version-specific — use at your own risk.
+
+---
+
+Lenovo Y700（TB323FU / SM8850）上 Ubuntu 26.04 arm64、Mutter 50.1 的下游修复。
 
 目标：修掉窗口过渡时的 `Page flip failed: drmModeAtomicCommit: EINVAL`，同时保留已有的触摸 resize 防崩补丁。
+
+## 适用范围
+
+| 项 | 要求 |
+|---|---|
+| 设备 | Lenovo Y700 TB323FU（SM8850 / Adreno 840） |
+| 系统 | Ubuntu 26.04 (resolute) arm64 |
+| Mutter | **50.1-0ubuntu2.5**（`dpkg -s libmutter-18-0 \| grep ^Version`） |
+
+包名带 `+y7001`，版本基线精确到 `50.1-0ubuntu2.5`。别的 mutter 版本补丁打不上，二进制也不保证 ABI 兼容。
 
 ## 根因
 
@@ -26,18 +44,57 @@ Mutter 的 `meta_kms_plane_assignment_set_fb_damage()` 直接把 damage region �
 - `patches/0003-debian-changelog.patch`
   - 版本 `50.1-0ubuntu2.5+y7001`。
 
-## 产物
+## 安装（用 Release 里的包）
 
-`artifacts/`（Git LFS）：
+二进制不进 git，全部在 [Releases](../../releases) 里：
 
-- `libmutter-18-0_50.1-0ubuntu2.5+y7001_arm64.deb`
-- `gir1.2-mutter-18_50.1-0ubuntu2.5+y7001_arm64.deb`
-- `libmutter-18-0-dbgsym_50.1-0ubuntu2.5+y7001_arm64.ddeb`
-- `mutter_50.1-0ubuntu2.5+y7001_arm64.buildinfo`
-- `mutter_50.1-0ubuntu2.5+y7001_arm64.changes`
-- `SHA256SUMS`
+```bash
+# 1. 下载某个 release 的全部 assets 到同一个目录，然后校验
+sha256sum -c SHA256SUMS
 
-目标环境：Ubuntu 26.04 (resolute) arm64，Mutter 50.1-0ubuntu2.5。
+# 2. 安装
+sudo apt-get install -y --allow-change-held-packages \
+  ./libmutter-18-0_50.1-0ubuntu2.5+y7001_arm64.deb \
+  ./gir1.2-mutter-18_50.1-0ubuntu2.5+y7001_arm64.deb
+
+# 3. 调试符号（可选）
+sudo dpkg -i ./libmutter-18-0-dbgsym_50.1-0ubuntu2.5+y7001_arm64.ddeb
+
+# 4. 防升级覆盖
+sudo apt-mark hold libmutter-18-0 gir1.2-mutter-18
+
+# 5. 生效（会关闭当前会话，不是重启设备）
+sudo systemctl restart gdm3
+```
+
+## 验证
+
+```bash
+sudo sh -c 'echo 0x1e > /sys/module/drm/parameters/debug'
+# 开合一个 GTK 窗口（Nautilus / Text Editor 等），然后：
+sudo journalctl -k --since '30 seconds ago' | grep 'invalid damage clip'
+sudo sh -c 'echo 0 > /sys/module/drm/parameters/debug'
+```
+
+预期：没有 `invalid damage clip`，`Page flip failed` 为 0。
+
+## 回滚
+
+```bash
+sudo apt-mark unhold libmutter-18-0 gir1.2-mutter-18
+sudo apt-get install --allow-downgrades \
+  libmutter-18-0=50.1-0ubuntu2.5 gir1.2-mutter-18=50.1-0ubuntu2.5
+sudo systemctl restart gdm3
+```
+
+如果官方源已经前进到更高版本，直接 `sudo apt-get install libmutter-18-0` 也会回到官方版本（`+y7001` 只比 Ubuntu 版本多一个后缀，不会被自动覆盖）。
+
+## 与上游的关系
+
+- `0001` 和 **GNOME MR !5203** 是同类问题。上游已经在 `main` 和 `gnome-50` 分支用另一种方式修复
+  （stage-impl clamp + `g_warn_if_fail`）。本仓库只是 Ubuntu 50.1 的下游 backport，
+  **不打算重复提交上游**。
+- `0002` 是本设备的下游补丁（`focus_surface == NULL`），上游没有对应上下文。
 
 ## 构建
 
@@ -49,7 +106,7 @@ sudo apt-get build-dep -y mutter
 ./scripts/build.sh
 ```
 
-`build.sh` 会 `apt-get source mutter=50.1-0ubuntu2.5`、按顺序应用 `patches/*.patch`、`dpkg-buildpackage -b -nc -uc -us`，并把 deb 复制到 `artifacts/`。需要 `deb-src` 源。
+`build.sh` 会 `apt-get source mutter=50.1-0ubuntu2.5`、按顺序应用 `patches/*.patch`、`dpkg-buildpackage -b -nc -uc -us`，并把 deb 复制到 `artifacts/`（该目录已被 `.gitignore` 忽略）。需要 `deb-src` 源。
 
 从 x86_64 主机使用现有 chroot：
 
@@ -59,31 +116,19 @@ CHROOT=/path/to/arm64-chroot ./scripts/build-in-chroot.sh
 
 `build-in-chroot.sh` 只做 bind mount 和 `chroot`，不会创建 chroot；chroot 里需要先装好 build-deps。
 
-## 安装
+## 目录结构
 
-```bash
-sudo apt-get install -y --allow-change-held-packages \
-  ./libmutter-18-0_50.1-0ubuntu2.5+y7001_arm64.deb \
-  ./gir1.2-mutter-18_50.1-0ubuntu2.5+y7001_arm64.deb
-sudo dpkg -i ./libmutter-18-0-dbgsym_50.1-0ubuntu2.5+y7001_arm64.ddeb
-sudo apt-mark hold libmutter-18-0
-sudo systemctl restart gdm3   # 不是重启设备；会关闭当前会话
+```text
+patches/   三个补丁（按序应用）
+scripts/   build.sh / build-in-chroot.sh
+artifacts/ 构建输出，已 gitignore；正式产物见 Releases
+COPYING    GPL-2.0
 ```
 
-## 验证
+## 免责声明
 
-```bash
-sudo sh -c 'echo 0x1e > /sys/module/drm/parameters/debug'
-# 开合一个 GTK 窗口（Nautilus / Text Editor 等）
-sudo journalctl -k --since '30 seconds ago' | grep -E 'invalid damage clip|vblank timeout'
-sudo sh -c 'echo 0 > /sys/module/drm/parameters/debug'
-```
-
-预期：没有 `invalid damage clip`，`Page flip failed` 为 0。
-
-## 未修复
-
-DPU 的 `vblank timeout: 400000`（flush bit 22 = DSC）是独立的 164Hz/DSC 驱动问题，本仓库不包含内核修复。
+非官方项目，与 Lenovo、Canonical、GNOME 无关。替换 `libmutter` 会影响整个桌面会话，
+请自行承担风险；出问题按上面「回滚」一节退回官方版本。
 
 ## License
 
